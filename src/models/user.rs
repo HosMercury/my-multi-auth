@@ -2,9 +2,9 @@ use password_auth::verify_password;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Postgres};
 use thiserror::Error;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 use uuid::Uuid;
-use validation::{validate_password};
+use validation::{validate_password, RE_USERNAME};
 use validator::Validate;
 
 use crate::validation;
@@ -16,12 +16,16 @@ pub struct User {
     pub username: String,
     pub email: Option<String>,
     password: String,
+    active: bool,
+
+    #[serde(with = "time::serde::iso8601")]
     pub created_at: OffsetDateTime,
+
     #[serde(with = "time::serde::iso8601::option")]
     pub updated_at: Option<OffsetDateTime>,
+
     #[serde(with = "time::serde::iso8601::option")]
     pub last_login: Option<OffsetDateTime>,
-    active: bool,
 }
 
 #[derive(Debug, Clone, Validate, Deserialize)]
@@ -45,10 +49,34 @@ pub struct Credentials {
     pub password: String,
 }
 
+#[derive(Debug, Clone, Validate, Deserialize)]
 pub struct SignUpPayload {
-    pub username: String,
-    pub email: Option<String>,
+    #[validate(
+        length(min = 4, message = "Username must be more than 4 letters"),
+        regex(
+            path = "RE_USERNAME",
+            message = "Username must be alphanumeric and/or dashes only"
+        )
+    )]
+    username: String,
+
+    #[validate(email)]
+    email: Option<String>,
+
+    #[validate(
+        length(min = 4, message = "Password must be more than 4 letters"),
+        custom(
+            function = "validate_password",
+            message = "password must be 4-50 characters long, contain letters and numbers, and must not contain spaces, special characters, or emoji"
+        )
+    )]
     password: String,
+}
+
+#[derive(Debug, Clone, Validate, Deserialize)]
+pub struct UserUppdate {
+    name: Option<String>,
+    email: Option<String>,
 }
 
 #[derive(Error, Debug)]
@@ -71,8 +99,14 @@ pub enum UserError {
     #[error("Error while checking user activity")]
     ActivationCheck(String),
 
+    #[error("Error while updating user data")]
+    UpdateingUser(String),
+
     #[error("Error while updating user email")]
     UpdateingEmail(String),
+
+    #[error("Error while updating user name")]
+    UpdateingName(String),
 
     #[error("Error while updating user password")]
     UpdateingPassword(String),
@@ -128,6 +162,22 @@ impl User {
         }
     }
 
+    async fn update_name(
+        &self,
+        id: Uuid,
+        new_name: String,
+        db: &Pool<Postgres>,
+    ) -> Result<bool, UserError> {
+        let result = sqlx::query!("UPDATE users SET name = $1 WHERE id = $2", new_name, id)
+            .execute(db)
+            .await;
+
+        match result {
+            Ok(_) => Ok(true),
+            Err(err) => Err(UserError::UpdateingName(err.to_string())),
+        }
+    }
+
     async fn update_email(
         &self,
         id: Uuid,
@@ -144,6 +194,49 @@ impl User {
         }
     }
 
+    async fn update_username(
+        &self,
+        id: Uuid,
+        new_username: String,
+        db: &Pool<Postgres>,
+    ) -> Result<bool, UserError> {
+        let result = sqlx::query!(
+            "UPDATE users SET username = $1 WHERE id = $2",
+            new_username,
+            id
+        )
+        .execute(db)
+        .await;
+
+        match result {
+            Ok(_) => Ok(true),
+            Err(err) => Err(UserError::UpdateingEmail(err.to_string())),
+        }
+    }
+
+    /// update user => name and/or email /////
+    async fn update_user(
+        &self,
+        id: Uuid,
+        payload: UserUppdate,
+        db: &Pool<Postgres>,
+    ) -> Result<bool, UserError> {
+        let result = sqlx::query!(
+            "UPDATE users SET email = $2 ,name = $3 , updated_at = $4 WHERE id = $1",
+            id,
+            payload.email,
+            payload.name,
+            OffsetDateTime::now_utc()
+        )
+        .execute(db)
+        .await;
+
+        match result {
+            Ok(_) => Ok(true),
+            Err(err) => Err(UserError::UpdateingUser(err.to_string())),
+        }
+    }
+
     async fn update_password(
         &self,
         id: Uuid,
@@ -151,9 +244,10 @@ impl User {
         db: &Pool<Postgres>,
     ) -> Result<bool, UserError> {
         let result = sqlx::query!(
-            "UPDATE users SET password = $1 WHERE id = $2",
+            "UPDATE users SET password = $2, updated_at = $3 WHERE id = $1",
+            id,
             new_password,
-            id
+            OffsetDateTime::now_utc()
         )
         .execute(db)
         .await;
@@ -165,9 +259,13 @@ impl User {
     }
 
     async fn de_activate(&self, id: Uuid, db: &Pool<Postgres>) -> Result<(), UserError> {
-        let result = sqlx::query!("UPDATE users SET active = false WHERE id = $1", id)
-            .execute(db)
-            .await;
+        let result = sqlx::query!(
+            "UPDATE users SET active = false , updated_at =$2 WHERE id = $1",
+            id,
+            OffsetDateTime::now_utc()
+        )
+        .execute(db)
+        .await;
 
         match result {
             Ok(_) => Ok(()),
@@ -176,9 +274,13 @@ impl User {
     }
 
     async fn activate(&self, id: Uuid, db: &Pool<Postgres>) -> Result<(), UserError> {
-        let result = sqlx::query!("UPDATE users SET active = true WHERE id = $1", id)
-            .execute(db)
-            .await;
+        let result = sqlx::query!(
+            "UPDATE users SET active = true , updated_at =$2 WHERE id = $1",
+            id,
+            OffsetDateTime::now_utc()
+        )
+        .execute(db)
+        .await;
 
         match result {
             Ok(_) => Ok(()),

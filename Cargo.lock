@@ -1327,6 +1327,7 @@ dependencies = [
  "axum",
  "axum-messages",
  "dotenvy",
+ "lazy_static",
  "password-auth",
  "regex",
  "serde",

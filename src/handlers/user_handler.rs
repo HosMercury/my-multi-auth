@@ -13,7 +13,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Template)]
-#[template(path = "auth/login.j2")]
+#[template(path = "auth/login.html.j2")]
 pub struct LoginTemplate {
     title: &'static str,
     messages: Vec<Message>,

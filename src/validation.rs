@@ -1,14 +1,12 @@
+use lazy_static::lazy_static;
 use regex::Regex;
 use sqlx::{query, Pool, Postgres};
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use validator::{ValidationError, ValidationErrorsKind};
 
 lazy_static! {
     pub static ref RE_USERNAME: Regex = Regex::new(r"^[a-zA-Z0-9_-]{4,50}$").unwrap();
 }
-
-pub(crate) static RE_USERNAME: OnceLock<Regex> = OnceLock::new();
 
 pub fn validate_password(password: &str) -> Result<(), ValidationError> {
     let mut has_whitespace = false;

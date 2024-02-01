@@ -34,7 +34,7 @@ async fn main() {
         .connect(&db_url)
         .await
         .expect("error connection to db");
-    /////////////////////////////////// AXUM ////////////////////////////
+    ///////////// AXUM /////////////
     let shared_state = AppState {
         app_name: "Multi-Auth",
         db,
