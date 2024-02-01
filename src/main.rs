@@ -1,13 +1,16 @@
 mod handlers;
 mod models;
+mod validation;
 
-use axum::{routing::get, Router};
+use axum_messages::MessagesManagerLayer;
+use handlers::user_handler;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
-use std::{env, sync::Arc};
+use std::env;
 use time::Duration;
 use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_redis_store::{fred::prelude::*, RedisStore};
 
+#[derive(Clone)]
 struct AppState {
     app_name: &'static str,
     db: Pool<Postgres>,
@@ -32,14 +35,16 @@ async fn main() {
         .await
         .expect("error connection to db");
     /////////////////////////////////// AXUM ////////////////////////////
-    let shared_state = Arc::new(AppState {
+    let shared_state = AppState {
         app_name: "Multi-Auth",
         db,
-    });
-    let app = Router::new()
-        .route("/", get(|| async { "Hello, World!" }))
+    };
+
+    let app = user_handler::router()
+        .layer(MessagesManagerLayer)
         .layer(session_layer)
         .with_state(shared_state);
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

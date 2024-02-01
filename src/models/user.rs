@@ -4,10 +4,15 @@ use sqlx::{FromRow, Pool, Postgres};
 use thiserror::Error;
 use time::OffsetDateTime;
 use uuid::Uuid;
+use validation::{validate_password};
+use validator::Validate;
+
+use crate::validation;
 
 #[derive(Clone, Serialize, Deserialize, FromRow)]
 pub struct User {
     pub id: Uuid,
+    name: String,
     pub username: String,
     pub email: Option<String>,
     password: String,
@@ -19,16 +24,31 @@ pub struct User {
     active: bool,
 }
 
-pub struct UserPayload {
+#[derive(Debug, Clone, Validate, Deserialize)]
+pub struct Credentials {
+    #[validate(
+        length(min = 4, message = "Username must be greater than 4 chars"),
+        regex(
+            path = "RE_USERNAME",
+            message = "Username must be alphanumeric and/or dashes only"
+        )
+    )]
+    pub username: String,
+
+    #[validate(
+        length(min = 4, message = "Password must be more than 4 letters"),
+        custom(
+            function = "validate_password",
+            message = "password must be 4-50 characters long, contain letters and numbers, and must not contain spaces, special characters, or emoji"
+        )
+    )]
+    pub password: String,
+}
+
+pub struct SignUpPayload {
     pub username: String,
     pub email: Option<String>,
     password: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Credentials {
-    pub username: String,
-    pub password: String,
 }
 
 #[derive(Error, Debug)]
@@ -42,18 +62,27 @@ pub enum UserError {
     #[error("Error while getting user")]
     Fetching(String),
 
+    #[error("Error while activating user")]
+    Activation(String),
+
     #[error("Error while deactivating user")]
     DeActivation(String),
 
     #[error("Error while checking user activity")]
     ActivationCheck(String),
+
+    #[error("Error while updating user email")]
+    UpdateingEmail(String),
+
+    #[error("Error while updating user password")]
+    UpdateingPassword(String),
 }
 
 impl User {
     async fn sign_in(&self, creds: Credentials, db: &Pool<Postgres>) -> Result<User, UserError> {
         let result = sqlx::query_as!(
             User,
-            "SELECT * FROM users WHERE username = $1",
+            "SELECT * FROM users WHERE username = $1 LIMIT 1",
             creds.username
         )
         .fetch_one(db)
@@ -68,7 +97,11 @@ impl User {
         }
     }
 
-    async fn sign_up(&self, payload: UserPayload, db: &Pool<Postgres>) -> Result<bool, UserError> {
+    async fn sign_up(
+        &self,
+        payload: SignUpPayload,
+        db: &Pool<Postgres>,
+    ) -> Result<bool, UserError> {
         let result = sqlx::query!(
             "INSERT INTO users (username, email, password) VALUES ($1, $2, $3)",
             payload.username,
@@ -95,14 +128,61 @@ impl User {
         }
     }
 
-    async fn de_activate(&self, id: Uuid, db: &Pool<Postgres>) -> Result<bool, UserError> {
-        let result = sqlx::query!("UPDATE users SET active = false WHERE id = $1", id)
+    async fn update_email(
+        &self,
+        id: Uuid,
+        new_email: String,
+        db: &Pool<Postgres>,
+    ) -> Result<bool, UserError> {
+        let result = sqlx::query!("UPDATE users SET email = $1 WHERE id = $2", new_email, id)
             .execute(db)
             .await;
 
         match result {
             Ok(_) => Ok(true),
+            Err(err) => Err(UserError::UpdateingEmail(err.to_string())),
+        }
+    }
+
+    async fn update_password(
+        &self,
+        id: Uuid,
+        new_password: String,
+        db: &Pool<Postgres>,
+    ) -> Result<bool, UserError> {
+        let result = sqlx::query!(
+            "UPDATE users SET password = $1 WHERE id = $2",
+            new_password,
+            id
+        )
+        .execute(db)
+        .await;
+
+        match result {
+            Ok(_) => Ok(true),
+            Err(err) => Err(UserError::UpdateingPassword(err.to_string())),
+        }
+    }
+
+    async fn de_activate(&self, id: Uuid, db: &Pool<Postgres>) -> Result<(), UserError> {
+        let result = sqlx::query!("UPDATE users SET active = false WHERE id = $1", id)
+            .execute(db)
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
             Err(err) => Err(UserError::DeActivation(err.to_string())),
+        }
+    }
+
+    async fn activate(&self, id: Uuid, db: &Pool<Postgres>) -> Result<(), UserError> {
+        let result = sqlx::query!("UPDATE users SET active = true WHERE id = $1", id)
+            .execute(db)
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => Err(UserError::Activation(err.to_string())),
         }
     }
 
